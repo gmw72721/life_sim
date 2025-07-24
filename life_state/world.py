@@ -58,13 +58,13 @@ def load_config() -> Dict[str, Any]:
         }
 
 
-def initialize_world(start_time: datetime = None, world_id: str = "main") -> WorldState:
+def initialize_world(world_id: str = "main", start_time: datetime = None) -> WorldState:
     """
     Initialize a new world state with default locations and setup.
     
     Args:
-        start_time: Starting datetime for the simulation (defaults to now)
         world_id: Unique identifier for this world instance
+        start_time: Starting datetime for the simulation (defaults to now)
         
     Returns:
         WorldState: Fully initialized world ready for simulation
@@ -82,6 +82,11 @@ def initialize_world(start_time: datetime = None, world_id: str = "main") -> Wor
     locations = Location.create_default_locations()
     for location in locations:
         world.locations[location.id] = location
+    
+    # Create some sample actors for the demo
+    for i, name in enumerate(["Alice", "Bob", "Charlie", "Diana", "Eve", "Frank", "Grace", "Henry", "Iris", "Jack"]):
+        home_letter = chr(ord('A') + (i % 12))  # A through L
+        create_sample_actor(world, name, home_letter)
     
     return world
 
