@@ -109,11 +109,13 @@ def create_sample_actor(world: WorldState, name: str, home_letter: str = "A") ->
     if home_id not in world.locations:
         raise ValueError(f"Home location {home_id} does not exist")
     
+    # REFINEMENT: Ensure actor has valid state and location_id, and world_id is set
     actor = Actor(
         name=name,
         home_id=home_id,
         location_id=home_id,  # Start at home
-        state=State.Idle,
+        world_id=world.world_id,  # Ensure world_id is set (refinement requirement)
+        state=State.Idle,     # Ensure valid state (refinement requirement)
         hunger=25.0,
         fatigue=30.0,
         mood=0.2,

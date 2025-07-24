@@ -7,9 +7,13 @@ when actors have calendar commitments that must be honored.
 
 from typing import Optional
 from datetime import datetime, timedelta
+import logging
 
 from .states import State
 from .models import Actor, WorldClock
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 def override_state(actor: Actor, clock: WorldClock) -> Optional[State]:
@@ -38,19 +42,24 @@ def override_state(actor: Actor, clock: WorldClock) -> Optional[State]:
     # Apply emergency overrides - certain conditions can break calendar constraints
     
     # Critical fatigue override - if actor is extremely tired, they must rest
-    if actor.fatigue >= 95 and required_state != State.Sleeping:
+    if actor.fatigue >= 95:
+        logger.debug(f"Actor {actor.name} calling in sick due to extreme fatigue ({actor.fatigue:.1f})")
+        # TODO: Prompt 2 - implement proper "CallInSick" action
         return State.Idle  # Allow them to choose sleep instead of scheduled activity
     
     # Critical hunger override - if actor is starving, they must eat
     if actor.hunger >= 90 and required_state not in [State.Eating, State.Sleeping]:
+        logger.debug(f"Actor {actor.name} breaking schedule due to extreme hunger ({actor.hunger:.1f})")
         return State.Idle  # Allow them to choose eating instead of scheduled activity
     
     # Health emergency override - very low mood might prevent certain activities
     if actor.mood <= -1.8 and required_state in [State.Socialising, State.In_Meeting]:
+        logger.debug(f"Actor {actor.name} too depressed for social activities (mood: {actor.mood:.2f})")
         return State.Idle  # Too depressed for social activities
     
     # Cash constraint override - can't do activities that cost money if broke
     if actor.cash <= 0 and required_state in [State.Shopping, State.Leisure]:
+        logger.debug(f"Actor {actor.name} can't afford scheduled activities (cash: ${actor.cash:.2f})")
         return State.Idle  # Can't afford scheduled activities
     
     # Location constraint - if actor can't reach required location, idle instead
@@ -58,11 +67,13 @@ def override_state(actor: Actor, clock: WorldClock) -> Optional[State]:
     if required_state == State.Focused_Work:
         # Work can be done from home or office
         if actor.location_id not in ["public_office"] and not actor.location_id.startswith("home_"):
+            logger.debug(f"Actor {actor.name} needs to travel to work location")
             return State.Transitioning  # Need to go somewhere to work
     
     elif required_state == State.In_Meeting:
         # Meetings typically require office or specific locations
         if actor.location_id not in ["public_office", "public_restaurant"]:
+            logger.debug(f"Actor {actor.name} needs to travel to meeting location")
             return State.Transitioning  # Need to go to meeting location
     
     elif required_state == State.Exercising:
@@ -70,11 +81,13 @@ def override_state(actor: Actor, clock: WorldClock) -> Optional[State]:
         valid_exercise_locations = ["public_gym", "public_park", "public_walking_path"]
         valid_exercise_locations.extend([f"home_{letter}" for letter in "abcdefghijkl"])
         if actor.location_id not in valid_exercise_locations:
+            logger.debug(f"Actor {actor.name} needs to travel to exercise location")
             return State.Transitioning  # Need to go to exercise location
     
     elif required_state == State.Shopping:
         # Shopping requires mall or grocery store
         if actor.location_id not in ["public_mall", "public_grocery_store"]:
+            logger.debug(f"Actor {actor.name} needs to travel to shopping location")
             return State.Transitioning  # Need to go to shopping location
     
     elif required_state == State.Socialising:
@@ -82,10 +95,57 @@ def override_state(actor: Actor, clock: WorldClock) -> Optional[State]:
         social_locations = ["public_coffee_shop", "public_restaurant", "public_bar", 
                           "public_park", "public_office"]
         if actor.location_id not in social_locations:
+            logger.debug(f"Actor {actor.name} needs to travel to social location")
             return State.Transitioning  # Need to go to social location
     
     # If all constraints are satisfied, return the required state
+    logger.debug(f"Actor {actor.name} following calendar: {required_state.name}")
     return required_state
+
+
+def is_weekend(clock: WorldClock) -> bool:
+    """
+    Check if current time is weekend using WorldClock timezone.
+    
+    Args:
+        clock: The world clock with current time
+        
+    Returns:
+        bool: True if weekend (Saturday or Sunday)
+    """
+    # Use the clock's current time (assumed to be in correct timezone)
+    current_time = clock.current_time
+    
+    # Get weekday (0=Monday, 6=Sunday)
+    weekday = current_time.weekday()
+    
+    # Weekend is Saturday (5) and Sunday (6)
+    is_weekend_day = weekday in [5, 6]
+    
+    logger.debug(f"Time: {current_time.strftime('%A %Y-%m-%d %H:%M')}, Weekend: {is_weekend_day}")
+    return is_weekend_day
+
+
+def is_business_hours(clock: WorldClock) -> bool:
+    """
+    Check if current time is during business hours.
+    
+    Args:
+        clock: The world clock with current time
+        
+    Returns:
+        bool: True if during business hours (9 AM - 5 PM, weekdays)
+    """
+    current_time = clock.current_time
+    hour = current_time.hour
+    
+    # Business hours: 9 AM to 5 PM
+    in_business_hours = 9 <= hour < 17
+    
+    # Must also be a weekday
+    is_weekday = not is_weekend(clock)
+    
+    return in_business_hours and is_weekday
 
 
 def get_upcoming_commitments(actor: Actor, clock: WorldClock, hours_ahead: int = 2) -> list:
@@ -151,12 +211,14 @@ def should_prepare_for_commitment(actor: Actor, clock: WorldClock) -> Optional[S
             
             # Work locations
             if required_state == State.Focused_Work:
-                if current_location not in ["public_office"] and current_location.startswith("home_"):
+                if current_location not in ["public_office"] and not current_location.startswith("home_"):
+                    logger.debug(f"Actor {actor.name} should prepare to travel for work")
                     return State.Transitioning
             
             # Meeting locations  
             elif required_state == State.In_Meeting:
                 if current_location not in ["public_office", "public_restaurant"]:
+                    logger.debug(f"Actor {actor.name} should prepare to travel for meeting")
                     return State.Transitioning
             
             # Exercise locations
@@ -164,11 +226,13 @@ def should_prepare_for_commitment(actor: Actor, clock: WorldClock) -> Optional[S
                 exercise_locations = ["public_gym", "public_park", "public_walking_path"]
                 exercise_locations.extend([f"home_{letter}" for letter in "abcdefghijkl"])
                 if current_location not in exercise_locations:
+                    logger.debug(f"Actor {actor.name} should prepare to travel for exercise")
                     return State.Transitioning
             
             # Shopping locations
             elif required_state == State.Shopping:
                 if current_location not in ["public_mall", "public_grocery_store"]:
+                    logger.debug(f"Actor {actor.name} should prepare to travel for shopping")
                     return State.Transitioning
             
             # Social locations
@@ -176,6 +240,7 @@ def should_prepare_for_commitment(actor: Actor, clock: WorldClock) -> Optional[S
                 social_locations = ["public_coffee_shop", "public_restaurant", "public_bar",
                                   "public_park", "public_office"]
                 if current_location not in social_locations:
+                    logger.debug(f"Actor {actor.name} should prepare to travel for social activity")
                     return State.Transitioning
     
     return None
@@ -198,6 +263,9 @@ def get_schedule_conflicts(actor: Actor) -> list:
         for block2 in calendar[i+1:]:
             if block1.overlaps_with(block2):
                 conflicts.append((block1, block2))
+                logger.warning(f"Schedule conflict for actor {actor.name}: "
+                             f"{block1.description or block1.required_state.name} overlaps with "
+                             f"{block2.description or block2.required_state.name}")
     
     return conflicts
 
@@ -266,6 +334,21 @@ def suggest_schedule_optimization(actor: Actor, clock: WorldClock) -> dict:
             "Consider grouping activities by location to reduce travel time"
         )
     
+    # Weekend vs weekday balance
+    weekend_blocks = 0
+    weekday_blocks = 0
+    
+    for block in sorted_blocks:
+        if block.start_dt.weekday() in [5, 6]:  # Saturday, Sunday
+            weekend_blocks += 1
+        else:
+            weekday_blocks += 1
+    
+    if weekend_blocks == 0 and weekday_blocks > 5:
+        suggestions["efficiency_tips"].append(
+            "Consider scheduling some leisure activities on weekends"
+        )
+    
     return suggestions
 
 
@@ -289,3 +372,24 @@ def is_valid_schedule_time(actor: Actor, start_time: datetime, duration_minutes:
             return False  # Overlaps with existing commitment
     
     return True
+
+
+def add_emergency_override(actor: Actor, clock: WorldClock, reason: str) -> bool:
+    """
+    Add an emergency override to skip scheduled activities.
+    
+    Args:
+        actor: The actor needing the override
+        clock: Current world clock
+        reason: Reason for the override
+        
+    Returns:
+        bool: True if override was applied
+    """
+    current_block = actor.get_current_time_block(clock.current_time)
+    if current_block:
+        logger.warning(f"Emergency override for actor {actor.name}: {reason}")
+        # In a full implementation, this might modify the calendar
+        # For now, just log the override
+        return True
+    return False

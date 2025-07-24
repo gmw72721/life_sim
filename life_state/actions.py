@@ -534,12 +534,15 @@ TIME_JUMP = Action(
 # ACTION REGISTRY
 # ============================================================================
 
-ALL_ACTIONS: List[Action] = [
-    # Core state actions
+# Core state actions (Prompt 1 implementation)
+CORE_ACTIONS: List[Action] = [
     GO_TO_SLEEP, WAKE_UP, STAY_IDLE, START_TRANSITION,
     DRIVE_TO_OFFICE, DRIVE_HOME, WALK_TO_PARK, WALK_TO_COFFEE_SHOP,
     START_WORK, EAT_MEAL, GRAB_SNACK,
-    
+]
+
+# Extended actions (Prompt 2 - currently available but not fully integrated)
+EXTENDED_ACTIONS: List[Action] = [
     # Commuting actions
     COMMUTE_BY_CAR, COMMUTE_WALKING, TAKE_BUS, RETURN_HOME_CAR,
     
@@ -566,7 +569,10 @@ ALL_ACTIONS: List[Action] = [
     TIME_JUMP
 ]
 
-# Create lookup dictionaries
+# All actions combined
+ALL_ACTIONS: List[Action] = CORE_ACTIONS + EXTENDED_ACTIONS
+
+# Create lookup dictionaries for efficient access
 ACTIONS_BY_NAME: Dict[str, Action] = {action.name: action for action in ALL_ACTIONS}
 ACTIONS_BY_STATE: Dict[State, List[Action]] = {}
 
@@ -576,21 +582,51 @@ for action in ALL_ACTIONS:
         ACTIONS_BY_STATE[action.resulting_state] = []
     ACTIONS_BY_STATE[action.resulting_state].append(action)
 
+# Create core actions registry (only actions for implemented states)
+CORE_ACTIONS_BY_STATE: Dict[State, List[Action]] = {}
+for action in CORE_ACTIONS:
+    if action.resulting_state not in CORE_ACTIONS_BY_STATE:
+        CORE_ACTIONS_BY_STATE[action.resulting_state] = []
+    CORE_ACTIONS_BY_STATE[action.resulting_state].append(action)
 
-def get_available_actions(actor, world_state) -> List[Action]:
+
+def get_action_registry() -> Dict[str, List[Action]]:
+    """
+    Get organized action registry by category.
+    
+    Returns:
+        Dict mapping category names to action lists
+    """
+    return {
+        'core': CORE_ACTIONS,
+        'commuting': [COMMUTE_BY_CAR, COMMUTE_WALKING, TAKE_BUS, RETURN_HOME_CAR],
+        'social': [MEET_COLLEAGUE, CHAT_WITH_FRIEND, ATTEND_SOCIAL_EVENT, NETWORK_EVENT],
+        'exercise': [GYM_WORKOUT, JOG_IN_PARK, HOME_EXERCISE, WALK_FOR_EXERCISE],
+        'leisure': [WATCH_MOVIE, READ_BOOK, BROWSE_LIBRARY, RELAX_AT_HOME, ENJOY_PARK],
+        'shopping': [GROCERY_SHOPPING, MALL_SHOPPING, QUICK_SHOPPING, WINDOW_SHOPPING],
+        'meetings': [FORMAL_MEETING, TEAM_MEETING, CLIENT_MEETING, VIRTUAL_MEETING],
+        'movement': [GO_TO_COFFEE_SHOP, GO_TO_RESTAURANT, GO_TO_MALL, GO_TO_GYM,
+                    GO_TO_LIBRARY, GO_TO_CLINIC, GO_TO_GATEWAY],
+        'special': [TIME_JUMP]
+    }
+
+
+def get_available_actions(actor, world_state, core_only: bool = True) -> List[Action]:
     """
     Get all actions available to an actor based on their current state and conditions.
     
     Args:
         actor: The actor to get actions for
         world_state: Current world state
+        core_only: If True, only return core actions (Prompt 1 states)
         
     Returns:
         List of actions the actor can perform
     """
     available = []
+    action_pool = CORE_ACTIONS if core_only else ALL_ACTIONS
     
-    for action in ALL_ACTIONS:
+    for action in action_pool:
         # Check location requirements
         if action.location_req is not None:
             if actor.location_id not in action.location_req:
@@ -611,23 +647,31 @@ def get_available_actions(actor, world_state) -> List[Action]:
         if actor.cash + action.cash_delta < 0:
             continue
         
+        # For core_only mode, skip actions that lead to unimplemented states
+        if core_only:
+            from .states import is_core_state
+            if not is_core_state(action.resulting_state):
+                continue
+        
         available.append(action)
     
     return available
 
 
-def lookup_forced(target_state: State, actor) -> Optional[Action]:
+def lookup_forced(target_state: State, actor, core_only: bool = True) -> Optional[Action]:
     """
     Find an action that transitions to the target state for calendar enforcement.
     
     Args:
         target_state: The required state
         actor: The actor who needs to transition
+        core_only: If True, only consider core actions
         
     Returns:
         Action that leads to the target state, or None if not possible
     """
-    possible_actions = ACTIONS_BY_STATE.get(target_state, [])
+    action_pool = CORE_ACTIONS_BY_STATE if core_only else ACTIONS_BY_STATE
+    possible_actions = action_pool.get(target_state, [])
     
     for action in possible_actions:
         # Check basic requirements
@@ -669,28 +713,104 @@ def apply_action(action: Action, actor, world_state) -> bool:
     """
     try:
         # Update actor state
+        old_state = actor.state
         actor.state = action.resulting_state
-        actor.substate = f"action_{action.name.lower().replace(' ', '_')}"
+        
+        # Set descriptive substate
+        action_name_clean = action.name.lower().replace(' ', '_').replace('-', '_')
+        actor.substate = f"action_{action_name_clean}"
         
         # Update location if specified
         if action.next_location is not None:
+            old_location = actor.location_id
             actor.location_id = action.next_location
+            if old_location != action.next_location:
+                # Log location change for debugging
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.debug(f"Actor {actor.name} moved from {old_location} to {action.next_location}")
         
-        # Apply resource changes
+        # Apply resource changes with bounds checking
         actor.update_resources(
             hunger_delta=action.hunger_delta,
             fatigue_delta=action.fatigue_delta,
-            mood_delta=0  # Mood changes handled separately
+            mood_delta=0  # Mood changes handled separately for now
         )
         
-        # Update cash
-        actor.cash += action.cash_delta
+        # Update cash with bounds checking
+        new_cash = actor.cash + action.cash_delta
+        if new_cash < 0:
+            # This should have been caught earlier, but safety check
+            actor.cash = 0.0
+        else:
+            actor.cash = new_cash
         
-        # Set action duration
-        actor.current_ticks_left = action.duration_ticks - 1  # -1 because this tick counts
+        # Set action duration (subtract 1 because current tick counts)
+        actor.current_ticks_left = max(0, action.duration_ticks - 1)
         
         return True
         
     except Exception as e:
-        # Action failed - could log this
+        # Action failed - log error and don't change actor state
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to apply action {action.name} to actor {actor.name}: {e}")
         return False
+
+
+def validate_action(action: Action) -> List[str]:
+    """
+    Validate an action definition for consistency.
+    
+    Args:
+        action: The action to validate
+        
+    Returns:
+        List of validation errors (empty if valid)
+    """
+    errors = []
+    
+    # Check required fields
+    if not action.name:
+        errors.append("Action name is required")
+    
+    if action.duration_ticks < 1:
+        errors.append(f"Duration must be at least 1 tick, got {action.duration_ticks}")
+    
+    if action.weight <= 0:
+        errors.append(f"Weight must be positive, got {action.weight}")
+    
+    # Check mood range
+    if not (-2 <= action.allowed_moods[0] <= action.allowed_moods[1] <= 2):
+        errors.append(f"Invalid mood range: {action.allowed_moods}")
+    
+    # Check resource deltas are reasonable
+    if abs(action.hunger_delta) > 50:
+        errors.append(f"Hunger delta seems excessive: {action.hunger_delta}")
+    
+    if abs(action.fatigue_delta) > 50:
+        errors.append(f"Fatigue delta seems excessive: {action.fatigue_delta}")
+    
+    return errors
+
+
+def get_action_statistics() -> Dict[str, Any]:
+    """
+    Get statistics about the action registry.
+    
+    Returns:
+        Dict containing action statistics
+    """
+    registry = get_action_registry()
+    
+    stats = {
+        'total_actions': len(ALL_ACTIONS),
+        'core_actions': len(CORE_ACTIONS),
+        'extended_actions': len(EXTENDED_ACTIONS),
+        'actions_by_category': {cat: len(actions) for cat, actions in registry.items()},
+        'actions_by_state': {state.name: len(actions) for state, actions in ACTIONS_BY_STATE.items()},
+        'average_duration': sum(action.duration_ticks for action in ALL_ACTIONS) / len(ALL_ACTIONS),
+        'average_weight': sum(action.weight for action in ALL_ACTIONS) / len(ALL_ACTIONS)
+    }
+    
+    return stats

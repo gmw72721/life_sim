@@ -8,9 +8,13 @@ environmental factors, and weighted action selection.
 import random
 from typing import Dict, Any, List, Tuple, Optional
 from enum import Enum, auto
+import logging
 
 from .actions import Action, get_available_actions, TIME_JUMP
 from .states import State
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 def mood_factor(mood: float) -> float:
@@ -23,12 +27,15 @@ def mood_factor(mood: float) -> float:
     Returns:
         float: Mood factor (1 + 0.015 * mood)
     """
+    # Clamp mood to valid range
+    mood = max(-2.0, min(2.0, mood))
     return 1.0 + (0.015 * mood)
 
 
 def hunger_factor(hunger: float) -> float:
     """
     Calculate hunger modifier for action probability.
+    Linear scaling: hunger_factor(0) == 0.8, hunger_factor(100) == 1.2
     
     Args:
         hunger: Actor's hunger level (0-100)
@@ -36,7 +43,12 @@ def hunger_factor(hunger: float) -> float:
     Returns:
         float: Hunger factor (linear scale 0.8 to 1.2)
     """
-    # Normalize hunger to 0-1 range, then scale to 0.8-1.2
+    # Clamp hunger to valid range and handle negative inputs
+    hunger = max(0.0, min(100.0, hunger))
+    
+    # Linear scaling: 0.8 + (0.4 * normalized_hunger)
+    # When hunger=0: 0.8 + (0.4 * 0) = 0.8
+    # When hunger=100: 0.8 + (0.4 * 1) = 1.2
     normalized = hunger / 100.0
     return 0.8 + (0.4 * normalized)
 
@@ -44,6 +56,7 @@ def hunger_factor(hunger: float) -> float:
 def fatigue_factor(fatigue: float) -> float:
     """
     Calculate fatigue modifier for action probability.
+    Linear scaling: fatigue_factor(0) == 0.8, fatigue_factor(100) == 1.2
     
     Args:
         fatigue: Actor's fatigue level (0-100)
@@ -51,7 +64,12 @@ def fatigue_factor(fatigue: float) -> float:
     Returns:
         float: Fatigue factor (linear scale 0.8 to 1.2)
     """
-    # Normalize fatigue to 0-1 range, then scale to 0.8-1.2
+    # Clamp fatigue to valid range and handle negative inputs
+    fatigue = max(0.0, min(100.0, fatigue))
+    
+    # Linear scaling: 0.8 + (0.4 * normalized_fatigue)
+    # When fatigue=0: 0.8 + (0.4 * 0) = 0.8
+    # When fatigue=100: 0.8 + (0.4 * 1) = 1.2
     normalized = fatigue / 100.0
     return 0.8 + (0.4 * normalized)
 
@@ -66,6 +84,8 @@ def presence_boost(n_present: int) -> float:
     Returns:
         float: Presence boost (min(n, 3) * 0.2)
     """
+    # Clamp to reasonable range
+    n_present = max(0, n_present)
     return min(n_present, 3) * 0.2
 
 
@@ -79,7 +99,7 @@ def calculate_action_probability(action: Action, actor, world_state) -> float:
         world_state: Current world state
         
     Returns:
-        float: Calculated probability weight
+        float: Calculated probability weight (always >= 0)
     """
     # Start with base weight
     prob = action.weight
@@ -89,13 +109,17 @@ def calculate_action_probability(action: Action, actor, world_state) -> float:
     
     # Apply hunger factor - higher hunger increases eating actions
     if action.hunger_delta < 0:  # Action reduces hunger (eating)
-        prob *= (1.0 + (actor.hunger / 100.0))  # More hungry = more likely to eat
+        # More hungry = more likely to eat (up to 2x multiplier)
+        hunger_multiplier = 1.0 + (actor.hunger / 100.0)
+        prob *= hunger_multiplier
     else:
         prob *= hunger_factor(actor.hunger)
     
     # Apply fatigue factor - higher fatigue increases rest actions
     if action.fatigue_delta < 0:  # Action reduces fatigue (sleeping, resting)
-        prob *= (1.0 + (actor.fatigue / 100.0))  # More tired = more likely to rest
+        # More tired = more likely to rest (up to 2x multiplier)
+        fatigue_multiplier = 1.0 + (actor.fatigue / 100.0)
+        prob *= fatigue_multiplier
     else:
         prob *= fatigue_factor(actor.fatigue)
     
@@ -142,52 +166,63 @@ def calculate_action_probability(action: Action, actor, world_state) -> float:
         elif actor.mood < -1.0:
             prob *= 0.5
     
-    return max(0.0, prob)  # Ensure non-negative
+    # Ensure non-negative result
+    return max(0.0, prob)
 
 
-def choose_action(actor, world_state) -> Optional[Action]:
+def choose_action(actor, world_state, core_only: bool = True) -> Optional[Action]:
     """
     Choose an action for an actor using weighted probability selection.
     
     Args:
         actor: The actor choosing an action
         world_state: Current world state
+        core_only: If True, only consider core actions (Prompt 1 states)
         
     Returns:
         Selected action or None if no valid actions
     """
-    from .time_jump import gateway_open, TIME_JUMP_PROB
-    
-    # Get available actions
-    available_actions = get_available_actions(actor, world_state)
-    
-    if not available_actions:
-        return None
-    
-    # Calculate probabilities for each action
-    action_probs = []
-    for action in available_actions:
-        prob = calculate_action_probability(action, actor, world_state)
-        action_probs.append(prob)
-    
-    # Check if time jump should be inserted
-    if gateway_open(actor, world_state.clock):
-        # Add time jump action with special probability
-        if TIME_JUMP not in available_actions:
-            available_actions.append(TIME_JUMP)
-            time_jump_prob = TIME_JUMP_PROB * TIME_JUMP.weight
-            action_probs.append(time_jump_prob)
-    
-    # Normalize probabilities
-    total_prob = sum(action_probs)
-    if total_prob <= 0:
-        # Fallback to uniform selection
-        return random.choice(available_actions)
-    
-    normalized_probs = [p / total_prob for p in action_probs]
-    
-    # Weighted random selection
-    return select_action_weighted(available_actions, normalized_probs)
+    try:
+        # Get available actions
+        available_actions = get_available_actions(actor, world_state, core_only=core_only)
+        
+        if not available_actions:
+            logger.debug(f"No available actions for actor {actor.name}")
+            return None
+        
+        # Calculate probabilities for each action
+        action_probs = []
+        for action in available_actions:
+            prob = calculate_action_probability(action, actor, world_state)
+            action_probs.append(prob)
+        
+        # Check if time jump should be inserted (only if not core_only)
+        if not core_only:
+            from .time_jump import gateway_open, TIME_JUMP_PROB
+            if gateway_open(actor, world_state.clock):
+                # Add time jump action with special probability
+                if TIME_JUMP not in available_actions:
+                    available_actions.append(TIME_JUMP)
+                    time_jump_prob = TIME_JUMP_PROB * TIME_JUMP.weight
+                    action_probs.append(time_jump_prob)
+        
+        # Normalize probabilities
+        total_prob = sum(action_probs)
+        if total_prob <= 0:
+            # Fallback to uniform selection if all probabilities are zero
+            logger.debug(f"All probabilities zero for actor {actor.name}, using uniform selection")
+            return random.choice(available_actions)
+        
+        normalized_probs = [p / total_prob for p in action_probs]
+        
+        # Weighted random selection
+        return select_action_weighted(available_actions, normalized_probs)
+        
+    except Exception as e:
+        logger.error(f"Error choosing action for actor {actor.name}: {e}")
+        # Fallback: return first available action if any
+        available_actions = get_available_actions(actor, world_state, core_only=core_only)
+        return available_actions[0] if available_actions else None
 
 
 def select_action_weighted(available_actions: List[Action], probabilities: List[float]) -> Optional[Action]:
@@ -202,16 +237,23 @@ def select_action_weighted(available_actions: List[Action], probabilities: List[
         Selected action or None
     """
     if not available_actions or not probabilities:
+        logger.warning("Empty actions or probabilities list in select_action_weighted")
         return None
     
     if len(available_actions) != len(probabilities):
+        logger.error(f"Mismatched lengths: {len(available_actions)} actions, {len(probabilities)} probabilities")
         return None
+    
+    # Guard against empty candidate lists
+    if len(available_actions) == 0:
+        raise ValueError("Cannot select from empty action list")
     
     # Use random.choices for weighted selection
     try:
         selected = random.choices(available_actions, weights=probabilities, k=1)
         return selected[0] if selected else None
-    except (ValueError, IndexError):
+    except (ValueError, IndexError) as e:
+        logger.warning(f"Weighted selection failed: {e}, falling back to uniform selection")
         # Fallback to uniform selection
         return random.choice(available_actions) if available_actions else None
 
@@ -248,7 +290,7 @@ def apply_need_modifiers(base_prob: float, actor, action: Action) -> float:
     elif actor.mood > 1.5 and action.requires_presence == "Any":
         modified_prob *= 1.8  # Very happy, prefer social actions
     
-    return modified_prob
+    return max(0.0, modified_prob)
 
 
 def apply_environmental_modifiers(base_prob: float, actor, action: Action, world_state) -> float:
@@ -307,7 +349,7 @@ def apply_environmental_modifiers(base_prob: float, actor, action: Action, world
         if action.resulting_state in [State.Leisure, State.Socialising, State.Eating]:
             modified_prob *= 1.5
     
-    return modified_prob
+    return max(0.0, modified_prob)
 
 
 def apply_schedule_modifiers(base_prob: float, actor, action: Action, world_state) -> float:
@@ -336,19 +378,22 @@ def apply_schedule_modifiers(base_prob: float, actor, action: Action, world_stat
             modified_prob *= 0.3
     
     # Check upcoming schedule (next hour)
-    next_hour = world_state.clock.current_time.replace(
-        hour=(world_state.clock.current_time.hour + 1) % 24,
-        minute=0
-    )
+    try:
+        next_hour = world_state.clock.current_time.replace(
+            hour=(world_state.clock.current_time.hour + 1) % 24,
+            minute=0
+        )
+        
+        for block in actor.calendar:
+            if block.start_dt <= next_hour < block.end_dt:
+                # Prepare for upcoming scheduled activity
+                if action.resulting_state == State.Transitioning:
+                    modified_prob *= 1.5
+                break
+    except (ValueError, AttributeError) as e:
+        logger.debug(f"Error checking upcoming schedule for actor {actor.name}: {e}")
     
-    for block in actor.calendar:
-        if block.start_dt <= next_hour < block.end_dt:
-            # Prepare for upcoming scheduled activity
-            if action.resulting_state == State.Transitioning:
-                modified_prob *= 1.5
-            break
-    
-    return modified_prob
+    return max(0.0, modified_prob)
 
 
 def generate_random_events(world_state) -> List[Dict[str, Any]]:
@@ -392,7 +437,7 @@ def calculate_final_probability(actor, action: Action, world_state) -> float:
         world_state: Current world state
         
     Returns:
-        float: Final probability (0.0 to 1.0)
+        float: Final probability (0.0 to 10.0, clamped)
     """
     # Start with base calculation
     base_prob = calculate_action_probability(action, actor, world_state)
@@ -402,5 +447,38 @@ def calculate_final_probability(actor, action: Action, world_state) -> float:
     prob = apply_environmental_modifiers(prob, actor, action, world_state)
     prob = apply_schedule_modifiers(prob, actor, action, world_state)
     
-    # Clamp to valid range
-    return max(0.0, min(10.0, prob))  # Allow up to 10x base weight
+    # Clamp to valid range (allow up to 10x base weight)
+    return max(0.0, min(10.0, prob))
+
+
+def validate_probability_inputs(actor, world_state) -> List[str]:
+    """
+    Validate inputs for probability calculations.
+    
+    Args:
+        actor: The actor to validate
+        world_state: The world state to validate
+        
+    Returns:
+        List of validation errors (empty if valid)
+    """
+    errors = []
+    
+    # Check actor resource bounds
+    if not (0 <= actor.hunger <= 100):
+        errors.append(f"Actor hunger out of bounds: {actor.hunger}")
+    
+    if not (0 <= actor.fatigue <= 100):
+        errors.append(f"Actor fatigue out of bounds: {actor.fatigue}")
+    
+    if not (-2 <= actor.mood <= 2):
+        errors.append(f"Actor mood out of bounds: {actor.mood}")
+    
+    # Check world state
+    if not world_state.clock:
+        errors.append("World state missing clock")
+    
+    if actor.location_id not in world_state.locations:
+        errors.append(f"Actor location {actor.location_id} not found in world")
+    
+    return errors

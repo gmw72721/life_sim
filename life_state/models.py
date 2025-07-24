@@ -7,7 +7,7 @@ Built with Pydantic for validation and serialization support.
 
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from uuid import uuid4
 
 from .states import State
@@ -20,6 +20,18 @@ class TimeBlock(BaseModel):
     end_dt: datetime = Field(description="End datetime for this time block")
     required_state: State = Field(description="State the actor should be in during this time")
     description: Optional[str] = Field(default=None, description="Optional description of the activity")
+    
+    class Config:
+        """Pydantic configuration for TimeBlock."""
+        use_enum_values = True
+        arbitrary_types_allowed = True
+    
+    @validator('end_dt')
+    def end_after_start(cls, v, values):
+        """Validate that end_dt is after start_dt."""
+        if 'start_dt' in values and v <= values['start_dt']:
+            raise ValueError('end_dt must be after start_dt')
+        return v
     
     def duration_minutes(self) -> int:
         """Get the duration of this time block in minutes."""
@@ -36,6 +48,10 @@ class Location(BaseModel):
     id: str = Field(description="Unique identifier for the location")
     name: str = Field(description="Human-readable name of the location")
     category: str = Field(description="Category of location (public, home, special)")
+    
+    class Config:
+        """Pydantic configuration for Location."""
+        use_enum_values = True
     
     @classmethod
     def create_default_locations(cls) -> List["Location"]:
@@ -78,8 +94,12 @@ class WorldClock(BaseModel):
     """Global time management for the simulation."""
     
     current_time: datetime = Field(description="Current simulation time (UTC)")
-    tick_duration_minutes: int = Field(default=15, description="Duration of each tick in minutes")
-    tick_count: int = Field(default=0, description="Number of ticks elapsed since start")
+    tick_duration_minutes: int = Field(default=15, ge=1, le=60, description="Duration of each tick in minutes")
+    tick_count: int = Field(default=0, ge=0, description="Number of ticks elapsed since start")
+    
+    class Config:
+        """Pydantic configuration for WorldClock."""
+        use_enum_values = True
     
     def advance_tick(self) -> None:
         """Advance the world clock by one tick."""
@@ -102,6 +122,7 @@ class Actor(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()), description="Unique actor identifier")
     name: str = Field(description="Human-readable name of the actor")
     home_id: str = Field(description="ID of the actor's home location")
+    world_id: str = Field(description="Identifies which forked world this actor belongs to")
     
     # Scheduling (used by Prompt 2 scheduler)
     calendar: List[TimeBlock] = Field(default_factory=list, description="Scheduled time blocks")
@@ -111,21 +132,37 @@ class Actor(BaseModel):
     substate: Optional[str] = Field(default=None, description="Optional substate for fine-grained control")
     location_id: str = Field(description="Current location ID")
     
-    # Resources (0-100 scale)
+    # Resources (0-100 scale with validation)
     hunger: float = Field(default=20.0, ge=0.0, le=100.0, description="Hunger level (0=not hungry, 100=starving)")
     fatigue: float = Field(default=20.0, ge=0.0, le=100.0, description="Fatigue level (0=rested, 100=exhausted)")
     mood: float = Field(default=0.0, ge=-2.0, le=2.0, description="Mood level (-2=very sad, +2=very happy)")
     
     # Resource counters (to be expanded in Prompt 2)
-    cash: float = Field(default=1000.0, description="Available money")
+    cash: float = Field(default=1000.0, ge=0.0, description="Available money")
     energy: float = Field(default=100.0, ge=0.0, le=100.0, description="Physical energy level")
     battery: float = Field(default=100.0, ge=0.0, le=100.0, description="Device battery level")
     
-    # Multi-world support (added for Prompt 2)
-    world_id: str = Field(default="main", description="Identifies which forked world this actor belongs to")
-    
     # Action duration tracking (added for Prompt 2)
-    current_ticks_left: int = Field(default=0, description="Remaining ticks for current action")
+    current_ticks_left: int = Field(default=0, ge=0, description="Remaining ticks for current action")
+    
+    class Config:
+        """Pydantic configuration for Actor."""
+        use_enum_values = True
+        arbitrary_types_allowed = True
+    
+    @validator('hunger', 'fatigue', 'energy', 'battery')
+    def validate_percentage_resources(cls, v):
+        """Validate that percentage resources are within 0-100 range."""
+        if not (0.0 <= v <= 100.0):
+            raise ValueError(f'Resource value must be between 0 and 100, got {v}')
+        return v
+    
+    @validator('mood')
+    def validate_mood_range(cls, v):
+        """Validate that mood is within -2 to +2 range."""
+        if not (-2.0 <= v <= 2.0):
+            raise ValueError(f'Mood must be between -2 and +2, got {v}')
+        return v
     
     def update_resources(self, hunger_delta: float, fatigue_delta: float, mood_delta: float) -> None:
         """Update actor resources, clamping to valid ranges."""
@@ -154,10 +191,27 @@ class WorldState(BaseModel):
     clock: WorldClock = Field(description="World time management")
     world_id: str = Field(default="main", description="Unique identifier for this world instance")
     
+    class Config:
+        """Pydantic configuration for WorldState."""
+        use_enum_values = True
+        arbitrary_types_allowed = True
+    
     def add_actor(self, actor: Actor) -> None:
         """Add an actor to the world."""
         actor.world_id = self.world_id
         self.actors[actor.id] = actor
+    
+    def remove_actor(self, actor_id: str) -> bool:
+        """Remove an actor from the world."""
+        if actor_id in self.actors:
+            del self.actors[actor_id]
+            return True
+        return False
+    
+    def fork_world(self, new_world_id: str) -> "WorldState":
+        """Create a fork of this world with a new world_id."""
+        # This is a stub - actual implementation in time_jump.py
+        raise NotImplementedError("World forking implemented in time_jump module")
     
     def get_actor(self, actor_id: str) -> Optional[Actor]:
         """Get an actor by ID."""
