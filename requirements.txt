@@ -10,9 +10,9 @@ pytest-cov>=4.0.0
 # numpy>=1.24.0          # For probability calculations
 # scipy>=1.10.0          # For advanced statistical functions
 
-# TODO: Prompt 3 will add:
-# fastapi>=0.104.0       # Web API framework
-# uvicorn>=0.24.0        # ASGI server
-# websockets>=11.0       # WebSocket support
-# python-multipart>=0.0.6  # Form data handling
-# python-jose[cryptography]>=3.3.0  # JWT authentication
+# FastAPI backend dependencies (Prompt 3)
+fastapi>=0.104.0       # Web API framework
+uvicorn>=0.24.0        # ASGI server
+websockets>=11.0       # WebSocket support
+python-multipart>=0.0.6  # Form data handling
+python-jose[cryptography]>=3.3.0  # JWT authentication
