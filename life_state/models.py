@@ -124,6 +124,9 @@ class Actor(BaseModel):
     # Multi-world support (added for Prompt 2)
     world_id: str = Field(default="main", description="Identifies which forked world this actor belongs to")
     
+    # Action duration tracking (added for Prompt 2)
+    current_ticks_left: int = Field(default=0, description="Remaining ticks for current action")
+    
     def update_resources(self, hunger_delta: float, fatigue_delta: float, mood_delta: float) -> None:
         """Update actor resources, clamping to valid ranges."""
         self.hunger = max(0.0, min(100.0, self.hunger + hunger_delta))
