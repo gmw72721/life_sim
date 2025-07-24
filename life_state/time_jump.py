@@ -9,6 +9,10 @@ from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime, timedelta
 from copy import deepcopy
 import uuid
+import logging
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Time jump configuration
 TIME_JUMP_PROB = 0.02  # Base insertion weight for time jump actions
@@ -25,17 +29,65 @@ def gateway_open(actor, world_clock) -> bool:
     Returns:
         bool: True if time-jump should be triggered
     """
-    # Location requirement: must be at TimeMachineGateway
-    loc_ok = actor.location_id == "time_machine_gateway"
-    
-    # Time requirement: early morning (6-8 AM) or late night (22+ PM)
-    hour = world_clock.current_time.hour
-    time_ok = (6 <= hour < 8) or (hour >= 22)
-    
-    # Mood requirement: must have positive or neutral mood
-    mood_ok = actor.mood >= 0
-    
-    return loc_ok and time_ok and mood_ok
+    try:
+        # Location requirement: must be at TimeMachineGateway
+        loc_ok = actor.location_id == "time_machine_gateway"
+        
+        # Time requirement: early morning (6-8 AM) or late night (22+ PM)
+        hour = world_clock.current_time.hour
+        time_ok = (6 <= hour < 8) or (hour >= 22)
+        
+        # Mood requirement: must have positive or neutral mood
+        mood_ok = actor.mood >= 0
+        
+        # Resource requirements: not too tired or hungry
+        resource_ok = actor.fatigue < 80 and actor.hunger < 70
+        
+        # Cash requirement: time jumping costs energy/resources
+        cash_ok = actor.cash >= 50.0  # Minimum cost for time jump
+        
+        # Energy requirement: must have sufficient energy
+        energy_ok = getattr(actor, 'energy', 100.0) >= 30.0
+        
+        # Additional edge case: coffee_left check (if actor has this attribute)
+        coffee_ok = True
+        if hasattr(actor, 'coffee_left'):
+            coffee_ok = actor.coffee_left > 0
+        
+        # Battery level (for devices needed for time travel)
+        battery_ok = getattr(actor, 'battery', 100.0) >= 20.0
+        
+        all_conditions = [loc_ok, time_ok, mood_ok, resource_ok, cash_ok, energy_ok, coffee_ok, battery_ok]
+        gateway_is_open = all(all_conditions)
+        
+        if gateway_is_open:
+            logger.debug(f"Gateway open for actor {actor.name}: all conditions met")
+        else:
+            failed_conditions = []
+            if not loc_ok:
+                failed_conditions.append("wrong location")
+            if not time_ok:
+                failed_conditions.append(f"wrong time ({hour}:00)")
+            if not mood_ok:
+                failed_conditions.append(f"bad mood ({actor.mood:.2f})")
+            if not resource_ok:
+                failed_conditions.append("too tired/hungry")
+            if not cash_ok:
+                failed_conditions.append("insufficient cash")
+            if not energy_ok:
+                failed_conditions.append("low energy")
+            if not coffee_ok:
+                failed_conditions.append("no coffee")
+            if not battery_ok:
+                failed_conditions.append("low battery")
+            
+            logger.debug(f"Gateway closed for actor {actor.name}: {', '.join(failed_conditions)}")
+        
+        return gateway_is_open
+        
+    except Exception as e:
+        logger.error(f"Error checking gateway conditions for actor {actor.name}: {e}")
+        return False
 
 
 def calculate_time_jump_effects(actor, time_delta: timedelta) -> Dict[str, float]:
@@ -55,6 +107,8 @@ def calculate_time_jump_effects(actor, time_delta: timedelta) -> Dict[str, float
         "hunger_delta": 8.0,    # Time jumping makes you hungry
         "mood_delta": -0.5,     # Disorientation penalty
         "energy_delta": -20.0,  # Drains energy
+        "cash_delta": -50.0,    # Cost of time jumping
+        "battery_delta": -10.0, # Drains device battery
     }
     
     # Additional effects based on jump distance
@@ -64,16 +118,28 @@ def calculate_time_jump_effects(actor, time_delta: timedelta) -> Dict[str, float
         # Long jumps are more disorienting
         effects["mood_delta"] -= 0.3
         effects["fatigue_delta"] += 10.0
+        effects["cash_delta"] -= 25.0  # Extra cost for long jumps
+    
+    if hours_jumped > 168:  # More than a week
+        # Very long jumps are extremely taxing
+        effects["mood_delta"] -= 0.5
+        effects["fatigue_delta"] += 20.0
+        effects["energy_delta"] -= 30.0
     
     if time_delta.total_seconds() < 0:
         # Jumping to the past is more difficult
         effects["fatigue_delta"] += 5.0
         effects["mood_delta"] -= 0.2
+        effects["cash_delta"] -= 15.0  # Past jumps cost more
+    
+    # Ensure effects don't push resources out of bounds
+    # This is a safety check - the actual clamping happens in update_resources
+    logger.debug(f"Time jump effects for {hours_jumped:.1f} hour jump: {effects}")
     
     return effects
 
 
-def fork_world(src_world, actor, target_time: datetime) -> 'WorldState':
+def fork_world(src_world: 'WorldState', actor: 'Actor', target_time: datetime) -> 'WorldState':
     """
     Create a forked copy of the world for time-jumping.
     
@@ -85,72 +151,120 @@ def fork_world(src_world, actor, target_time: datetime) -> 'WorldState':
     Returns:
         New WorldState instance representing the forked timeline
     """
-    # Create a deep copy of the world
-    fork_id = f"{src_world.world_id}_fork_{uuid.uuid4().hex[:8]}"
-    forked_world = deepcopy(src_world)
+    logger.info(f"Forking world {src_world.world_id} for actor {actor.name} jumping to {target_time}")
     
-    # Update world ID
-    forked_world.world_id = fork_id
-    
-    # Update all actors' world_id
-    for forked_actor in forked_world.actors.values():
-        forked_actor.world_id = fork_id
-    
-    # Adjust world clock to target time
-    forked_world.clock.current_time = target_time
-    
-    # Find the jumping actor in the forked world
-    jumping_actor = forked_world.actors.get(actor.id)
-    if jumping_actor:
-        # Apply time-jump effects
+    try:
+        # Create a deep copy of the world (this is expensive but necessary)
+        fork_id = f"{src_world.world_id}_fork_{uuid.uuid4().hex[:8]}"
+        
+        # Pre-fork isolation: ensure we don't modify the original during copy
+        logger.debug("Creating deep copy of world state...")
+        forked_world = deepcopy(src_world)
+        
+        # Update world ID
+        forked_world.world_id = fork_id
+        
+        # Update all actors' world_id to maintain consistency
+        for forked_actor in forked_world.actors.values():
+            forked_actor.world_id = fork_id
+        
+        # Adjust world clock to target time
         time_delta = target_time - src_world.clock.current_time
-        effects = calculate_time_jump_effects(jumping_actor, time_delta)
+        forked_world.clock.current_time = target_time
         
-        jumping_actor.update_resources(
-            hunger_delta=effects.get("hunger_delta", 0),
-            fatigue_delta=effects.get("fatigue_delta", 0),
-            mood_delta=effects.get("mood_delta", 0)
-        )
+        # Recalculate tick count based on new time
+        # This is approximate - in a full implementation we'd track this more carefully
+        hours_jumped = time_delta.total_seconds() / 3600
+        ticks_jumped = int(hours_jumped * 4)  # 4 ticks per hour (15-minute ticks)
+        forked_world.clock.tick_count = max(0, src_world.clock.tick_count + ticks_jumped)
         
-        # Update energy if the actor has it
-        if hasattr(jumping_actor, 'energy'):
-            jumping_actor.energy = max(0.0, min(100.0, 
-                jumping_actor.energy + effects.get("energy_delta", 0)))
+        # Find the jumping actor in the forked world
+        jumping_actor = forked_world.actors.get(actor.id)
+        if jumping_actor:
+            # Apply time-jump effects
+            effects = calculate_time_jump_effects(jumping_actor, time_delta)
+            
+            # Apply resource changes with bounds checking
+            jumping_actor.update_resources(
+                hunger_delta=effects.get("hunger_delta", 0),
+                fatigue_delta=effects.get("fatigue_delta", 0),
+                mood_delta=effects.get("mood_delta", 0)
+            )
+            
+            # Update other resources safely
+            if "energy_delta" in effects:
+                jumping_actor.energy = max(0.0, min(100.0, 
+                    jumping_actor.energy + effects["energy_delta"]))
+            
+            if "cash_delta" in effects:
+                jumping_actor.cash = max(0.0, jumping_actor.cash + effects["cash_delta"])
+            
+            if "battery_delta" in effects:
+                jumping_actor.battery = max(0.0, min(100.0,
+                    jumping_actor.battery + effects["battery_delta"]))
+            
+            # Set actor state to indicate they just completed a time jump
+            from .states import State
+            jumping_actor.state = State.Idle  # They arrive in idle state
+            jumping_actor.substate = "post_time_jump"
+            
+            logger.info(f"Applied time jump effects to actor {jumping_actor.name} in forked world")
+        else:
+            logger.error(f"Could not find jumping actor {actor.id} in forked world")
         
-        # Set actor state to indicate they just completed a time jump
-        jumping_actor.state = State.Idle  # They arrive in idle state
-        jumping_actor.substate = "post_time_jump"
-    
-    # Mark original actor as "Absent" (they've jumped to another timeline)
-    actor.state = State.Idle  # Reset to idle
-    actor.substate = "time_jumped_away"
-    
-    return forked_world
+        # Mark original actor as having jumped away (they're now in another timeline)
+        actor.state = State.Idle  # Reset to idle
+        actor.substate = "time_jumped_away"
+        
+        # Add probability mass tracking for the forked world
+        forked_world.prob_mass = TIME_JUMP_PROB
+        if hasattr(src_world, 'prob_mass'):
+            src_world.prob_mass *= (1 - TIME_JUMP_PROB)
+        else:
+            src_world.prob_mass = 1 - TIME_JUMP_PROB
+        
+        logger.info(f"Successfully created forked world {fork_id}")
+        return forked_world
+        
+    except Exception as e:
+        logger.error(f"Failed to fork world: {e}")
+        raise RuntimeError(f"World forking failed: {e}")
 
 
-def synchronize_worlds(world_manager) -> None:
+def synchronize_worlds(world_manager: 'WorldManager') -> None:
     """
     Synchronize multiple world timelines.
     
     Args:
         world_manager: Manager containing all active world forks
     """
-    # Advance all worlds by one tick
-    for world in world_manager.worlds.values():
-        world.clock.advance_tick()
-    
-    # Update probability masses (simple decay for now)
-    total_mass = sum(getattr(world, 'prob_mass', 1.0) for world in world_manager.worlds.values())
-    
-    if total_mass > 0:
+    try:
+        # Advance all worlds by one tick
         for world in world_manager.worlds.values():
-            if not hasattr(world, 'prob_mass'):
-                world.prob_mass = 1.0 / len(world_manager.worlds)
-            # Simple decay - could be more sophisticated
-            world.prob_mass *= 0.999
+            world.clock.advance_tick()
+        
+        # Update probability masses (simple decay for now)
+        total_mass = sum(getattr(world, 'prob_mass', 1.0) for world in world_manager.worlds.values())
+        
+        if total_mass > 0:
+            # Normalize probability masses
+            for world in world_manager.worlds.values():
+                if not hasattr(world, 'prob_mass'):
+                    world.prob_mass = 1.0 / len(world_manager.worlds)
+                # Simple decay - could be more sophisticated
+                world.prob_mass *= 0.999
+        
+        # Log synchronization info periodically
+        if len(world_manager.worlds) > 1:
+            main_world = world_manager.get_world(world_manager.main_world_id)
+            if main_world and main_world.clock.tick_count % 50 == 0:
+                logger.debug(f"Synchronized {len(world_manager.worlds)} worlds at tick {main_world.clock.tick_count}")
+    
+    except Exception as e:
+        logger.error(f"Error synchronizing worlds: {e}")
 
 
-def get_timeline_divergence(world_a, world_b) -> float:
+def get_timeline_divergence(world_a: 'WorldState', world_b: 'WorldState') -> float:
     """
     Calculate how much two timelines have diverged.
     
@@ -166,41 +280,46 @@ def get_timeline_divergence(world_a, world_b) -> float:
     
     divergence_factors = []
     
-    # Time difference
-    time_diff = abs((world_a.clock.current_time - world_b.clock.current_time).total_seconds())
-    time_divergence = min(1.0, time_diff / (24 * 3600))  # Normalize to days
-    divergence_factors.append(time_divergence)
-    
-    # Actor state differences
-    common_actors = set(world_a.actors.keys()) & set(world_b.actors.keys())
-    if common_actors:
-        state_differences = 0
-        for actor_id in common_actors:
-            actor_a = world_a.actors[actor_id]
-            actor_b = world_b.actors[actor_id]
-            
-            # Compare states
-            if actor_a.state != actor_b.state:
-                state_differences += 1
-            
-            # Compare locations
-            if actor_a.location_id != actor_b.location_id:
-                state_differences += 1
-            
-            # Compare resource levels (normalized)
-            resource_diff = (
-                abs(actor_a.hunger - actor_b.hunger) +
-                abs(actor_a.fatigue - actor_b.fatigue) +
-                abs(actor_a.mood - actor_b.mood) * 50  # Scale mood to 0-100 range
-            ) / 300.0  # Normalize
-            
-            state_differences += resource_diff
+    try:
+        # Time difference
+        time_diff = abs((world_a.clock.current_time - world_b.clock.current_time).total_seconds())
+        time_divergence = min(1.0, time_diff / (24 * 3600))  # Normalize to days
+        divergence_factors.append(time_divergence)
         
-        state_divergence = min(1.0, state_differences / (len(common_actors) * 3))
-        divergence_factors.append(state_divergence)
+        # Actor state differences
+        common_actors = set(world_a.actors.keys()) & set(world_b.actors.keys())
+        if common_actors:
+            state_differences = 0
+            for actor_id in common_actors:
+                actor_a = world_a.actors[actor_id]
+                actor_b = world_b.actors[actor_id]
+                
+                # Compare states
+                if actor_a.state != actor_b.state:
+                    state_differences += 1
+                
+                # Compare locations
+                if actor_a.location_id != actor_b.location_id:
+                    state_differences += 1
+                
+                # Compare resource levels (normalized)
+                resource_diff = (
+                    abs(actor_a.hunger - actor_b.hunger) +
+                    abs(actor_a.fatigue - actor_b.fatigue) +
+                    abs(actor_a.mood - actor_b.mood) * 50  # Scale mood to 0-100 range
+                ) / 300.0  # Normalize
+                
+                state_differences += resource_diff
+            
+            state_divergence = min(1.0, state_differences / (len(common_actors) * 3))
+            divergence_factors.append(state_divergence)
+        
+        # Return average divergence
+        return sum(divergence_factors) / len(divergence_factors) if divergence_factors else 0.0
     
-    # Return average divergence
-    return sum(divergence_factors) / len(divergence_factors) if divergence_factors else 0.0
+    except Exception as e:
+        logger.error(f"Error calculating timeline divergence: {e}")
+        return 1.0  # Assume maximum divergence on error
 
 
 class WorldManager:
@@ -217,8 +336,9 @@ class WorldManager:
         self.active_forks: List[str] = []
         self.fork_history: Dict[str, List[str]] = {}
         self.main_world_id: Optional[str] = None
+        logger.info("Initialized WorldManager")
     
-    def add_world(self, world) -> None:
+    def add_world(self, world: 'WorldState') -> None:
         """
         Add a world to the manager.
         
@@ -229,15 +349,17 @@ class WorldManager:
         
         # Set probability mass if not already set
         if not hasattr(world, 'prob_mass'):
-            world.prob_mass = 1.0 if not self.worlds else 1.0 / len(self.worlds)
+            world.prob_mass = 1.0 if len(self.worlds) == 1 else 1.0 / len(self.worlds)
         
         # Track main world
         if self.main_world_id is None:
             self.main_world_id = world.world_id
+            logger.info(f"Set main world: {world.world_id}")
         
         # Add to active forks if it's a fork
         if "_fork_" in world.world_id and world.world_id not in self.active_forks:
             self.active_forks.append(world.world_id)
+            logger.debug(f"Added fork world: {world.world_id}")
     
     def remove_world(self, world_id: str) -> None:
         """
@@ -248,6 +370,7 @@ class WorldManager:
         """
         if world_id in self.worlds:
             del self.worlds[world_id]
+            logger.debug(f"Removed world: {world_id}")
         
         if world_id in self.active_forks:
             self.active_forks.remove(world_id)
@@ -255,7 +378,7 @@ class WorldManager:
         if world_id in self.fork_history:
             del self.fork_history[world_id]
     
-    def get_world(self, world_id: str):
+    def get_world(self, world_id: str) -> Optional['WorldState']:
         """
         Get a world by ID.
         
@@ -267,7 +390,7 @@ class WorldManager:
         """
         return self.worlds.get(world_id)
     
-    def create_fork(self, source_world_id: str, actor, target_time: datetime) -> str:
+    def create_fork(self, source_world_id: str, actor: 'Actor', target_time: datetime) -> str:
         """
         Create a new world fork.
         
@@ -301,6 +424,7 @@ class WorldManager:
             self.fork_history[source_world_id] = []
         self.fork_history[source_world_id].append(forked_world.world_id)
         
+        logger.info(f"Created fork {forked_world.world_id} from {source_world_id}")
         return forked_world.world_id
     
     def advance_all_worlds(self) -> None:
@@ -328,6 +452,7 @@ class WorldManager:
             # Check probability mass
             prob_mass = getattr(world, 'prob_mass', 1.0)
             if prob_mass < min_prob_mass:
+                logger.debug(f"Pruning world {world_id} due to low probability mass: {prob_mass}")
                 self.remove_world(world_id)
                 pruned.append(world_id)
                 continue
@@ -338,10 +463,14 @@ class WorldManager:
                 for actor in world.actors.values()
             )
             
+            # Keep at least 3 worlds, but prune inactive ones
             if not has_active_jumpers and len(self.worlds) > 3:
-                # Keep at least 3 worlds, but prune inactive ones
+                logger.debug(f"Pruning inactive world {world_id}")
                 self.remove_world(world_id)
                 pruned.append(world_id)
+        
+        if pruned:
+            logger.info(f"Pruned {len(pruned)} worlds: {pruned}")
         
         return pruned
     

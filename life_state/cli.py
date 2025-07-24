@@ -87,6 +87,10 @@ Examples:
         '--verbose', '-v', action='store_true',
         help='Enable verbose output'
     )
+    run_parser.add_argument(
+        '--live', action='store_true',
+        help='Enable live WebSocket broadcasting (stub for Prompt 3)'
+    )
     
     # Parallel command
     parallel_parser = subparsers.add_parser('parallel', help='Run multi-world simulation')
@@ -105,6 +109,10 @@ Examples:
     parallel_parser.add_argument(
         '--verbose', '-v', action='store_true',
         help='Enable verbose output'
+    )
+    parallel_parser.add_argument(
+        '--live', action='store_true',
+        help='Enable live WebSocket broadcasting (stub for Prompt 3)'
     )
     
     # Config command
@@ -136,6 +144,10 @@ def run_simulation(args):
     else:
         end_time = start_time + timedelta(minutes=args.minutes)
         print(f"Running for {args.minutes} simulation minutes")
+    
+    # TODO: Prompt 3 - implement live WebSocket broadcasting
+    if args.live:
+        print("⚠️  Live WebSocket broadcasting requested but not yet implemented (Prompt 3)")
     
     # Create log directory
     if args.log:
@@ -230,6 +242,10 @@ def run_parallel_simulation_cli(args):
     
     print(f"Created {len(world.actors)} actors")
     print(f"Max concurrent worlds: {args.max_worlds}")
+    
+    # TODO: Prompt 3 - implement live WebSocket broadcasting
+    if args.live:
+        print("⚠️  Live WebSocket broadcasting requested but not yet implemented (Prompt 3)")
     
     # Setup callback for verbose output
     def tick_callback(manager):

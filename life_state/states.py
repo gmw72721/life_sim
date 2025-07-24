@@ -6,7 +6,7 @@ Core states are implemented in Prompt 1, extended states reserved for Prompt 2.
 """
 
 from enum import Enum, auto
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from .models import Actor
@@ -34,6 +34,10 @@ class State(Enum):
     In_Meeting = auto()     # TODO: Prompt 2 - scheduled work interactions
     TimeJumping = auto()    # TODO: Prompt 2 - triggers multi-world fork
     # -----------------------------------
+    
+    def __str__(self) -> str:
+        """Return clean string representation for serialization."""
+        return self.name
 
 
 def can_transition(actor: "Actor", new_state: State) -> bool:
@@ -134,3 +138,92 @@ def is_core_state(state: State) -> bool:
         State.Eating,
     }
     return state in core_states
+
+
+def on_enter_state(actor: "Actor", state: State) -> None:
+    """
+    Handle entering a new state.
+    
+    Args:
+        actor: The actor entering the state
+        state: The state being entered
+    """
+    if state == State.Sleeping:
+        # Reset substate when entering sleep
+        actor.substate = "natural_sleep"
+    elif state == State.Waking_Up:
+        # Brief transition state
+        actor.substate = "waking_process"
+    elif state == State.Idle:
+        # Clear any previous substate
+        actor.substate = None
+    elif state == State.Transitioning:
+        # Mark as in transition
+        actor.substate = "in_transit"
+    elif state in {State.Driving, State.Walking}:
+        # Movement states
+        actor.substate = "moving"
+    elif state == State.Focused_Work:
+        # Work session started
+        actor.substate = "working"
+    elif state == State.Eating:
+        # Eating started
+        actor.substate = "consuming"
+    else:
+        # Unimplemented states
+        if not is_core_state(state):
+            raise NotImplementedError(f"State {state.name} not implemented in Prompt 1")
+
+
+def on_exit_state(actor: "Actor", state: State) -> None:
+    """
+    Handle exiting a state.
+    
+    Args:
+        actor: The actor exiting the state
+        state: The state being exited
+    """
+    if state == State.Sleeping:
+        # Waking up process
+        actor.substate = "just_woke_up"
+    elif state == State.Focused_Work:
+        # Work session ended
+        actor.substate = "work_completed"
+    elif state == State.Eating:
+        # Meal finished
+        actor.substate = "meal_finished"
+    elif state in {State.Driving, State.Walking}:
+        # Arrived at destination
+        actor.substate = "arrived"
+    else:
+        # Unimplemented states
+        if not is_core_state(state):
+            raise NotImplementedError(f"State {state.name} not implemented in Prompt 1")
+
+
+def get_state_priority(state: State) -> int:
+    """
+    Get priority level for state conflicts (higher = more important).
+    
+    Args:
+        state: The state to get priority for
+        
+    Returns:
+        int: Priority level (0-10)
+    """
+    priority_map = {
+        State.Sleeping: 9,      # Critical need
+        State.Eating: 8,        # High priority when hungry
+        State.Focused_Work: 6,  # Important but interruptible
+        State.Transitioning: 5, # Movement priority
+        State.Driving: 4,       # Transport
+        State.Walking: 3,       # Transport
+        State.Waking_Up: 2,     # Brief transition
+        State.Idle: 1,          # Default state
+    }
+    
+    # Unimplemented states get zero priority
+    if not is_core_state(state):
+        return 0
+    
+    return priority_map.get(state, 1)
