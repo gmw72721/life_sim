@@ -1,0 +1,48 @@
+{
+  "timestamp": "2025-07-24T08:51:52.758121",
+  "total_worlds": 1,
+  "metrics": {
+    "total_ticks": 5,
+    "elapsed_seconds": 0.000729,
+    "ticks_per_second": 6858.710562414266,
+    "average_tick_time": 0.00014171600341796874,
+    "action_counts": {},
+    "state_transitions": 5,
+    "resource_samples": 5
+  },
+  "worlds": {
+    "main": {
+      "world_id": "main",
+      "final_tick": 5,
+      "final_time": "2025-07-24T10:06:52.757037",
+      "total_actors": 2,
+      "probability_mass": 1.0,
+      "actors": [
+        {
+          "id": "c65d9538-5602-403f-b01d-fd11be352f4e",
+          "name": "Alice",
+          "final_state": "Leisure",
+          "final_location": "home_a",
+          "final_resources": {
+            "hunger": 27.0,
+            "fatigue": 32.0,
+            "mood": 0.2,
+            "cash": 1000.0
+          }
+        },
+        {
+          "id": "c103e1b4-fba7-4cad-8998-f1ccf43195a4",
+          "name": "Bob",
+          "final_state": "Socialising",
+          "final_location": "public_coffee_shop",
+          "final_resources": {
+            "hunger": 35.0,
+            "fatigue": 45.0,
+            "mood": 0.2,
+            "cash": 1000.0
+          }
+        }
+      ]
+    }
+  }
+}

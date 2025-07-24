@@ -1,0 +1,45 @@
+# Configuration for life_state simulation
+# This will be expanded in Prompt 2 with more complex parameters
+
+# Core resource depletion rates (per 15-minute tick)
+fatigue_rate:
+  sleeping: -5.0      # recovers fatigue
+  waking_up: 0.5
+  idle: 0.2
+  transitioning: 1.0
+  driving: 1.5
+  walking: 2.0
+  focused_work: 3.0
+  eating: 0.5
+
+hunger_rate:
+  sleeping: 0.3
+  waking_up: 0.5
+  idle: 0.8
+  transitioning: 1.0
+  driving: 1.2
+  walking: 1.5
+  focused_work: 1.8
+  eating: -15.0       # eating reduces hunger
+
+# Mood modifiers (per tick) - basic implementation
+mood_modifiers:
+  sleeping: 0.1
+  waking_up: -0.1
+  idle: -0.05
+  transitioning: 0.0
+  driving: -0.02
+  walking: 0.05
+  focused_work: 0.02
+  eating: 0.15
+
+# TODO: Prompt 2 will add:
+# - Action probability weights
+# - Time-jump trigger conditions
+# - Complex resource interactions
+# - Dynamic mood calculations
+
+# TODO: Prompt 3 will add:
+# - API configuration
+# - UI theme settings
+# - Database connection strings
