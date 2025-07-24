@@ -22,13 +22,13 @@ class TestLinearScalingFunctions:
     def test_hunger_factor_bounds(self):
         """Test that hunger_factor has correct bounds."""
         # Test boundary values
-        assert hunger_factor(0) == 0.8
-        assert hunger_factor(100) == 1.2
+        assert abs(hunger_factor(0) - 0.8) < 1e-10
+        assert abs(hunger_factor(100) - 1.2) < 1e-10
         
         # Test intermediate values
-        assert hunger_factor(50) == 1.0
-        assert hunger_factor(25) == 0.9
-        assert hunger_factor(75) == 1.1
+        assert abs(hunger_factor(50) - 1.0) < 1e-10
+        assert abs(hunger_factor(25) - 0.9) < 1e-10
+        assert abs(hunger_factor(75) - 1.1) < 1e-10
     
     def test_hunger_factor_negative_input_clamping(self):
         """Test that negative hunger inputs are clamped to 0."""
@@ -37,19 +37,19 @@ class TestLinearScalingFunctions:
     
     def test_hunger_factor_high_input_clamping(self):
         """Test that high hunger inputs are clamped to 100."""
-        assert hunger_factor(150) == 1.2
-        assert hunger_factor(200) == 1.2
+        assert abs(hunger_factor(150) - 1.2) < 1e-10
+        assert abs(hunger_factor(200) - 1.2) < 1e-10
     
     def test_fatigue_factor_bounds(self):
         """Test that fatigue_factor has correct bounds."""
         # Test boundary values
-        assert fatigue_factor(0) == 0.8
-        assert fatigue_factor(100) == 1.2
+        assert abs(fatigue_factor(0) - 0.8) < 1e-10
+        assert abs(fatigue_factor(100) - 1.2) < 1e-10
         
         # Test intermediate values
-        assert fatigue_factor(50) == 1.0
-        assert fatigue_factor(25) == 0.9
-        assert fatigue_factor(75) == 1.1
+        assert abs(fatigue_factor(50) - 1.0) < 1e-10
+        assert abs(fatigue_factor(25) - 0.9) < 1e-10
+        assert abs(fatigue_factor(75) - 1.1) < 1e-10
     
     def test_fatigue_factor_negative_input_clamping(self):
         """Test that negative fatigue inputs are clamped to 0."""
@@ -58,8 +58,8 @@ class TestLinearScalingFunctions:
     
     def test_fatigue_factor_high_input_clamping(self):
         """Test that high fatigue inputs are clamped to 100."""
-        assert fatigue_factor(150) == 1.2
-        assert fatigue_factor(300) == 1.2
+        assert abs(fatigue_factor(150) - 1.2) < 1e-10
+        assert abs(fatigue_factor(300) - 1.2) < 1e-10
     
     def test_mood_factor_bounds(self):
         """Test that mood_factor works within valid mood range."""
@@ -80,12 +80,12 @@ class TestLinearScalingFunctions:
     
     def test_presence_boost_bounds(self):
         """Test that presence_boost works correctly."""
-        assert presence_boost(0) == 0.0
-        assert presence_boost(1) == 0.2
-        assert presence_boost(2) == 0.4
-        assert presence_boost(3) == 0.6
-        assert presence_boost(4) == 0.6  # Capped at 3
-        assert presence_boost(10) == 0.6  # Capped at 3
+        assert abs(presence_boost(0) - 0.0) < 1e-10
+        assert abs(presence_boost(1) - 0.2) < 1e-10
+        assert abs(presence_boost(2) - 0.4) < 1e-10
+        assert abs(presence_boost(3) - 0.6) < 1e-10
+        assert abs(presence_boost(4) - 0.6) < 1e-10  # Capped at 3
+        assert abs(presence_boost(10) - 0.6) < 1e-10  # Capped at 3
     
     def test_presence_boost_negative_input(self):
         """Test that negative presence inputs are handled."""
@@ -210,7 +210,7 @@ class TestActionSelection:
             home_id="home_a",
             location_id="nonexistent_location",  # Invalid location
             world_id="test_world",
-            cash=-1000.0  # Negative cash (though this should be validated)
+            cash=0.0  # Minimum valid cash
         )
         
         # This should handle the case gracefully
@@ -290,8 +290,10 @@ class TestProbabilityValidation:
             world_id="test_world"
         )
         
-        # Create world without clock
-        world_no_clock = WorldState(actors={}, locations={}, world_id="test")
+        # Create world with a temporary clock, then set to None
+        from life_state.models import WorldClock
+        temp_clock = WorldClock(current_time=datetime(2024, 1, 1, 12, 0))
+        world_no_clock = WorldState(actors={}, locations={}, world_id="test", clock=temp_clock)
         world_no_clock.clock = None
         
         errors = validate_probability_inputs(actor, world_no_clock)

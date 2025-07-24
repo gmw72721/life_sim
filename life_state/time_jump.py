@@ -218,7 +218,7 @@ def fork_world(src_world: 'WorldState', actor: 'Actor', target_time: datetime) -
         
         # Add probability mass tracking for the forked world
         forked_world.prob_mass = TIME_JUMP_PROB
-        if hasattr(src_world, 'prob_mass'):
+        if hasattr(src_world, 'prob_mass') and src_world.prob_mass is not None:
             src_world.prob_mass *= (1 - TIME_JUMP_PROB)
         else:
             src_world.prob_mass = 1 - TIME_JUMP_PROB
@@ -275,7 +275,8 @@ def get_timeline_divergence(world_a: 'WorldState', world_b: 'WorldState') -> flo
     Returns:
         float: Divergence score (0.0 = identical, 1.0 = completely different)
     """
-    if world_a.world_id == world_b.world_id:
+    # Only return 0.0 if they are the exact same object
+    if world_a is world_b:
         return 0.0
     
     divergence_factors = []

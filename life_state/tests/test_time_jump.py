@@ -280,5 +280,5 @@ class TestWorldManager:
         assert "total_actors" in summary
         
         assert summary["total_worlds"] == 1
-        assert summary["total_actors"] == 1
+        assert summary["total_actors"] == 11  # 10 from initialize_world + 1 from create_sample_actor
         assert summary["main_world"] == world.world_id

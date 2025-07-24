@@ -7,7 +7,7 @@ Built with Pydantic for validation and serialization support.
 
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from uuid import uuid4
 
 from .states import State
@@ -21,15 +21,15 @@ class TimeBlock(BaseModel):
     required_state: State = Field(description="State the actor should be in during this time")
     description: Optional[str] = Field(default=None, description="Optional description of the activity")
     
-    class Config:
-        """Pydantic configuration for TimeBlock."""
-        use_enum_values = True
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True
+    )
     
-    @validator('end_dt')
-    def end_after_start(cls, v, values):
+    @field_validator('end_dt')
+    @classmethod
+    def end_after_start(cls, v, info):
         """Validate that end_dt is after start_dt."""
-        if 'start_dt' in values and v <= values['start_dt']:
+        if info.data and 'start_dt' in info.data and v <= info.data['start_dt']:
             raise ValueError('end_dt must be after start_dt')
         return v
     
@@ -49,9 +49,7 @@ class Location(BaseModel):
     name: str = Field(description="Human-readable name of the location")
     category: str = Field(description="Category of location (public, home, special)")
     
-    class Config:
-        """Pydantic configuration for Location."""
-        use_enum_values = True
+    model_config = ConfigDict()
     
     @classmethod
     def create_default_locations(cls) -> List["Location"]:
@@ -97,9 +95,7 @@ class WorldClock(BaseModel):
     tick_duration_minutes: int = Field(default=15, ge=1, le=60, description="Duration of each tick in minutes")
     tick_count: int = Field(default=0, ge=0, description="Number of ticks elapsed since start")
     
-    class Config:
-        """Pydantic configuration for WorldClock."""
-        use_enum_values = True
+    model_config = ConfigDict()
     
     def advance_tick(self) -> None:
         """Advance the world clock by one tick."""
@@ -145,19 +141,20 @@ class Actor(BaseModel):
     # Action duration tracking (added for Prompt 2)
     current_ticks_left: int = Field(default=0, ge=0, description="Remaining ticks for current action")
     
-    class Config:
-        """Pydantic configuration for Actor."""
-        use_enum_values = True
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True
+    )
     
-    @validator('hunger', 'fatigue', 'energy', 'battery')
+    @field_validator('hunger', 'fatigue', 'energy', 'battery')
+    @classmethod
     def validate_percentage_resources(cls, v):
         """Validate that percentage resources are within 0-100 range."""
         if not (0.0 <= v <= 100.0):
             raise ValueError(f'Resource value must be between 0 and 100, got {v}')
         return v
     
-    @validator('mood')
+    @field_validator('mood')
+    @classmethod
     def validate_mood_range(cls, v):
         """Validate that mood is within -2 to +2 range."""
         if not (-2.0 <= v <= 2.0):
@@ -190,11 +187,11 @@ class WorldState(BaseModel):
     locations: Dict[str, Location] = Field(default_factory=dict, description="All locations in the world")
     clock: WorldClock = Field(description="World time management")
     world_id: str = Field(default="main", description="Unique identifier for this world instance")
+    prob_mass: Optional[float] = Field(default=None, description="Probability mass for timeline forking")
     
-    class Config:
-        """Pydantic configuration for WorldState."""
-        use_enum_values = True
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True
+    )
     
     def add_actor(self, actor: Actor) -> None:
         """Add an actor to the world."""
