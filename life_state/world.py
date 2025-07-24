@@ -70,7 +70,8 @@ def initialize_world(world_id: str = "main", start_time: datetime = None) -> Wor
         WorldState: Fully initialized world ready for simulation
     """
     if start_time is None:
-        start_time = datetime.utcnow()
+        from datetime import timezone
+        start_time = datetime.now(timezone.utc)
     
     # Create world clock
     clock = WorldClock(current_time=start_time)

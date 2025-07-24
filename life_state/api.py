@@ -190,14 +190,14 @@ async def websocket_world_updates(websocket: WebSocket, world_id: str):
         # Send initial world state
         world = sim_manager.get_world(world_id)
         initial_data = sim_manager.get_tick_data(world_id, world.clock.tick_count)
-        await websocket.send_json(initial_data.dict())
+        await websocket.send_json(initial_data.model_dump())
         
         # Keep connection alive and send periodic updates
         while True:
             await asyncio.sleep(1.0)  # Send updates every second
             try:
                 current_data = sim_manager.get_tick_data(world_id, world.clock.tick_count)
-                await websocket.send_json(current_data.dict())
+                await websocket.send_json(current_data.model_dump())
             except Exception as e:
                 print(f"Error sending WebSocket update: {e}")
                 break
@@ -243,7 +243,7 @@ async def start_simulation(world_id: str, background_tasks: BackgroundTasks):
                 # Broadcast updates to WebSocket clients
                 asyncio.create_task(sim_manager.broadcast_to_world(
                     world_id, 
-                    sim_manager.get_tick_data(world_id, world.clock.tick_count).dict()
+                    sim_manager.get_tick_data(world_id, world.clock.tick_count).model_dump()
                 ))
                 
                 time.sleep(0.1)  # Small delay between ticks

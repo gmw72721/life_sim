@@ -105,10 +105,10 @@ class TestProbabilityFactors:
     def test_hunger_factor(self):
         """Test hunger factor calculation."""
         # Test minimum hunger
-        assert hunger_factor(0.0) == 0.8
+        assert abs(hunger_factor(0.0) - 0.8) < 1e-10
         
         # Test maximum hunger
-        assert hunger_factor(100.0) == 1.2
+        assert abs(hunger_factor(100.0) - 1.2) < 1e-10
         
         # Test middle values
         assert 0.8 < hunger_factor(50.0) < 1.2
@@ -116,10 +116,10 @@ class TestProbabilityFactors:
     def test_fatigue_factor(self):
         """Test fatigue factor calculation."""
         # Test minimum fatigue
-        assert fatigue_factor(0.0) == 0.8
+        assert abs(fatigue_factor(0.0) - 0.8) < 1e-10
         
         # Test maximum fatigue
-        assert fatigue_factor(100.0) == 1.2
+        assert abs(fatigue_factor(100.0) - 1.2) < 1e-10
         
         # Test middle values
         assert 0.8 < fatigue_factor(50.0) < 1.2
